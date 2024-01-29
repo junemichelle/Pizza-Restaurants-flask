@@ -1,89 +1,144 @@
-from flask import Flask, jsonify, request
-from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
+from flask import Flask, request, make_response, jsonify
+from flask_migrate import Migrate
+from models import db, Restaurant, Pizza
 
 app = Flask(__name__)
-CORS(app)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///pizza_restaurant.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 
-class Restaurant(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), nullable=False)
-    address = db.Column(db.String(100), nullable=False)
-    pizzas = db.relationship('Pizza', secondary='restaurant_pizza', backref='restaurants')
+db.init_app(app)
 
-    def __repr__(self):
-        return f'<Restaurant {self.name}>'
- 
-class Pizza(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), nullable=False)
-    ingredients = db.Column(db.String(100), nullable=False)
-
-    def __repr__(self):
-        return f'<Pizza {self.name}>'
-
-class RestaurantPizza(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    price = db.Column(db.Float, nullable=False)
-    pizza_id = db.Column(db.Integer, db.ForeignKey('pizza.id'), nullable=False)
-    restaurant_id = db.Column(db.Integer, db.ForeignKey('restaurant.id'), nullable=False)
-
-    def save(self):
-        db.session.add(self)
-        db.session.commit()
-        return True
-
-    def delete(self):
-        db.session.delete(self)
-        db.session.commit()
 
 @app.route('/restaurants', methods=['GET'])
 def get_restaurants():
-    restaurants = Restaurant.query.all()
-    return jsonify(restaurants)
+    restaurant_list = []
+
+    for restaurant in Restaurant.query.all():
+        restaurant_data = {
+            'id': restaurant.id,
+            'name': restaurant.name,
+            'address': restaurant.address
+        }
+        restaurant_list.append(restaurant_data)
+
+    response = make_response(
+        jsonify(restaurant_list),
+        201
+    )
+
+    return response
+
 
 @app.route('/restaurants/<int:id>', methods=['GET'])
 def get_restaurant(id):
     restaurant = Restaurant.query.get(id)
-    if restaurant:
-        return jsonify(restaurant)
-    else:
+
+    if restaurant is None:
         return jsonify({'error': 'Restaurant not found'}), 404
+
+    pizzas = []
+    for restaurant_pizza in restaurant.pizzas:
+        pizza = restaurant_pizza.pizza
+        pizza_data = {
+            'id': pizza.id,
+            'name': pizza.name,
+            'ingredients': pizza.ingredients
+        }
+        pizzas.append(pizza_data)
+
+    restaurant_data = {
+        'id': restaurant.id,
+        'name': restaurant.name,
+        'address': restaurant.address,
+        'pizzas': pizzas
+    }
+
+    return jsonify(restaurant_data)
+
+
+@app.route('/restaurants', methods=['POST'])
+def create_restaurant():
+    data = request.get_json()
+
+    name = data.get('name')
+    address = data.get('address')
+
+    if not name or not address:
+        return jsonify({'errors': ['Missing required data']}), 400
+
+    restaurant = Restaurant(name=name, address=address)
+    db.session.add(restaurant)
+    db.session.commit()
+
+    restaurant_data = {
+        'id': restaurant.id,
+        'name': restaurant.name,
+        'address': restaurant.address
+    }
+    response = make_response(
+        jsonify(restaurant_data),
+        201
+    )
+
+    return response
+
+
+@app.route('/restaurants/<int:id>', methods=['PUT'])
+def update_restaurant(id):
+    data = request.get_json()
+
+    name = data.get('name')
+    address = data.get('address')
+
+    restaurant = Restaurant.query.get(id)
+
+    if restaurant is None:
+        return jsonify({'error': 'Restaurant not found'}), 404
+
+    if name is not None:
+        restaurant.name = name
+
+    if address is not None:
+        restaurant.address = address
+
+    db.session.commit()
+
+    response = make_response(
+        jsonify({'message': 'Restaurant updated'}), 200
+    )
+    return response
+
 
 @app.route('/restaurants/<int:id>', methods=['DELETE'])
 def delete_restaurant(id):
     restaurant = Restaurant.query.get(id)
-    if restaurant:
-        restaurant.delete()
-        return '', 204
-    else:
+
+    if restaurant is None:
         return jsonify({'error': 'Restaurant not found'}), 404
+
+    db.session.delete(restaurant)
+    db.session.commit()
+
+    return '', 204
+
 
 @app.route('/pizzas', methods=['GET'])
 def get_pizzas():
     pizzas = Pizza.query.all()
-    return jsonify(pizzas)
+    pizza_list = []
 
-@app.route('/restaurant_pizzas', methods=['POST'])
-def create_restaurant_pizza():
-    data = request.get_json()
-    price = data['price']
-    pizza_id = data['pizza_id']
-    restaurant_id = data['restaurant_id']
+    for pizza in pizzas:
+        pizza_data = {
+            'id': pizza.id,
+            'name': pizza.name,
+            'ingredients': pizza.ingredients
+        }
+        pizza_list.append(pizza_data)
 
-    restaurant_pizza = RestaurantPizza(price=price, pizza_id=pizza_id, restaurant_id=restaurant_id)
-    result = restaurant_pizza.save()
+    return jsonify(pizza_list), 200
 
-    if result:
-        pizza = Pizza.query.get(pizza_id)
-        return jsonify(pizza)
-    else:
-        return jsonify({'errors': ['validation errors']}), 400
 
 if __name__ == '__main__':
-    db.create_all()
-    app.run(debug=True)
+    app.run(debug=True, port=5000)
